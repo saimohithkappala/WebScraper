@@ -21,12 +21,9 @@ else:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
 def load_models():
-    summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+    summarizer = pipeline("summarization", model="t5-small")
     sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-
-    device = 0 if torch.cuda.is_available() else -1
-    summarizer.device = device
-    sentiment_analyzer.device = device
+    return summarizer, sentiment_analyzer
 
     return summarizer, sentiment_analyzer
 
