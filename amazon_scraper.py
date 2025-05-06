@@ -25,8 +25,6 @@ def load_models():
     sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
     return summarizer, sentiment_analyzer
 
-    return summarizer, sentiment_analyzer
-
 summarizer, sentiment_analyzer = load_models()
 
 st.title("🔗 Ecommerce Product Scraper & Analyzer")
