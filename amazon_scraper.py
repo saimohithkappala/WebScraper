@@ -6,10 +6,7 @@ import torch
 import pandas as pd
 from bs4 import BeautifulSoup
 from transformers import pipeline
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.service import Service
+import requests
 import re
 
 # Apply patch for nested asyncio loops (Streamlit compatibility)
@@ -33,26 +30,16 @@ st.title("🔗 Ecommerce Product Scraper & Analyzer")
 
 url = st.text_input("Enter a URL to summarize and analyze sentiment", "")
 
-def get_soup_with_selenium(url):
-    chrome_options = Options()
-    chrome_options.add_argument("--headless=new")  # New headless mode
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920x1080")
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-
+def get_soup(url):
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+    }
     try:
-        # Use webdriver-manager to install and manage ChromeDriver
-        service = Service(ChromeDriverManager().install())
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-        driver.get(url)
-        html = driver.page_source
-        driver.quit()
-        return BeautifulSoup(html, 'html.parser')
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        return BeautifulSoup(response.text, 'html.parser')
     except Exception as e:
-        raise RuntimeError(f"Failed to launch Chrome WebDriver: {e}")
-
+        raise RuntimeError(f"Requests failed: {e}")
 
 def clean_price(value):
     clean_value = re.sub(r"^[^\d₹]*|\s*[^\d₹.]+$", "", value).strip()
@@ -137,8 +124,10 @@ def extract_flipkart_data(soup):
 
 if url:
     try:
-        st.info("📦 Fetching content with Selenium...")
-        soup = get_soup_with_selenium(url)
+        st.info("📦 Fetching content...")
+
+        # Get the soup using requests instead of Selenium
+        soup = get_soup(url)
 
         # Load models after URL input to avoid slow startup
         summarizer, sentiment_analyzer = load_models()
