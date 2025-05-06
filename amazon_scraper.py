@@ -1,24 +1,9 @@
-import asyncio
-import sys
-import streamlit as st
 import requests
 import pandas as pd
 from bs4 import BeautifulSoup
 from transformers import pipeline
-import torch
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
-from selenium.webdriver.chrome.service import Service
 import re
-
-if sys.platform.startswith("win"):
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-else:
-    try:
-        asyncio.get_running_loop()
-    except RuntimeError:
-        asyncio.set_event_loop(asyncio.new_event_loop())
+import streamlit as st
 
 def load_models():
     summarizer = pipeline("summarization", model="t5-small")
@@ -41,20 +26,13 @@ def get_flipkart_content(url):
     return soup
 
 def get_amazon_content(url):
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--window-size=1920x1080")
-    chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-
-    service = Service(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=chrome_options)
-    driver.get(url)
-    html = driver.page_source
-    driver.quit()
-    return BeautifulSoup(html, 'html.parser')
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+    }
+    res = requests.get(url, headers=headers, timeout=10)
+    res.raise_for_status()
+    soup = BeautifulSoup(res.text, 'html.parser')
+    return soup
 
 def clean_price(value):
     clean_value = re.sub(r"^[^\d₹]*|\s*[^\d₹.]+$", "", value).strip()
