@@ -14,15 +14,20 @@ import re
 
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+else:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
 
 def load_models():
-    summarizer = pipeline("summarization", model="t5-small")
+    summarizer = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
     sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-    
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    summarizer.model.to(device)
-    sentiment_analyzer.model.to(device)
-    
+
+    device = 0 if torch.cuda.is_available() else -1
+    summarizer.device = device
+    sentiment_analyzer.device = device
+
     return summarizer, sentiment_analyzer
 
 summarizer, sentiment_analyzer = load_models()
@@ -60,10 +65,9 @@ def clean_price(value):
     clean_value = re.sub(r"^[^\d₹]*|\s*[^\d₹.]+$", "", value).strip()
     return clean_value
 
-# Extract Amazon product data
 def extract_amazon_data(soup):
     extracted_info = {}
-    
+
     title_tag = soup.find("span", {"id": "productTitle"})
     if title_tag:
         extracted_info['Title'] = title_tag.get_text(separator=" ", strip=True)
@@ -221,9 +225,6 @@ if url:
 
         st.info("Analyzing sentiment...")
         sentiment = sentiment_analyzer(summary)[0]
-
-        # st.subheader("💬 Sentiment Analysis")
-        # st.write(f"Sentiment: {sentiment['label']}, with a score of {sentiment['score']:.2f}")
 
         st.subheader("🛒 Product Details")
         product_details = {
