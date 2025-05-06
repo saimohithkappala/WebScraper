@@ -9,14 +9,11 @@ from transformers import pipeline
 import requests
 import re
 
-# Apply patch for nested asyncio loops (Streamlit compatibility)
 nest_asyncio.apply()
 
-# Optional: Windows-specific asyncio fix
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
-# Cache model loading (only runs once per session)
 @st.cache_resource(show_spinner="🔄 Loading ML models...")
 def load_models():
     summarizer = pipeline("summarization", model="t5-small")
@@ -126,10 +123,8 @@ if url:
     try:
         st.info("📦 Fetching content...")
 
-        # Get the soup using requests instead of Selenium
         soup = get_soup(url)
 
-        # Load models after URL input to avoid slow startup
         summarizer, sentiment_analyzer = load_models()
 
         if "amazon" in url.lower():
