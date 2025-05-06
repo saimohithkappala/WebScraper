@@ -1,5 +1,5 @@
 altair==5.5.0
-attrs==25.4.0
+attrs==25.3.0
 beautifulsoup4==4.13.5
 blinker==1.9.1
 cachetools==5.6.0
