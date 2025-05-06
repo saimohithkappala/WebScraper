@@ -1,4 +1,5 @@
 import asyncio
+import nest_asyncio
 import sys
 import streamlit as st
 import torch
@@ -9,24 +10,24 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.service import Service
-import re  # For regex cleaning
+import re
 
+# Apply patch for nested asyncio loops (Streamlit compatibility)
+nest_asyncio.apply()
+
+# Optional: Windows-specific asyncio fix
 if sys.platform.startswith("win"):
     asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+# Cache model loading (only runs once per session)
+@st.cache_resource(show_spinner="🔄 Loading ML models...")
 def load_models():
-    # Initialize pipelines
     summarizer = pipeline("summarization", model="t5-small")
     sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-    
-    # Move the models to the device (GPU if available, otherwise CPU)
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     summarizer.model.to(device)
     sentiment_analyzer.model.to(device)
-    
     return summarizer, sentiment_analyzer
-
-summarizer, sentiment_analyzer = load_models()
 
 st.title("🔗 Ecommerce Product Scraper & Analyzer")
 
@@ -40,7 +41,6 @@ def get_soup_with_selenium(url):
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--window-size=1920x1080")
     chrome_options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36")
-
     service = Service(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=chrome_options)
     driver.get(url)
@@ -48,40 +48,23 @@ def get_soup_with_selenium(url):
     driver.quit()
     return BeautifulSoup(html, 'html.parser')
 
-# Function to clean MRP and Price values to only display the numeric value
 def clean_price(value):
-    # Remove any leading ellipsis or unwanted characters, then remove non-numeric characters except ₹ and dot
     clean_value = re.sub(r"^[^\d₹]*|\s*[^\d₹.]+$", "", value).strip()
-    
-    # Ensure that only numeric value and ₹ symbol are returned
-    if "₹" in clean_value:
-        return clean_value
-    return clean_value
+    return clean_value if "₹" in clean_value else clean_value
 
-# Function to extract data from Amazon
 def extract_amazon_data(soup):
     extracted_info = {}
-
-    # Product Title
     title_tag = soup.find("span", {"id": "productTitle"})
     if title_tag:
         extracted_info['Title'] = title_tag.get_text(separator=" ", strip=True)
-
-    # Price - Amazon
-    price_tag = soup.find("span", {'class': 'a-price-whole'})
-    if not price_tag:
-        price_tag = soup.find("span", {"id": "priceblock_dealprice"})
+    price_tag = soup.find("span", {'class': 'a-price-whole'}) or soup.find("span", {"id": "priceblock_dealprice"})
     if price_tag:
         currency_tag = soup.find("span", {'class': 'a-price-symbol'})
         currency = currency_tag.get_text() if currency_tag else "$"
         extracted_info['Price'] = f"{currency} {price_tag.get_text(separator=' ', strip=True)}"
-
-    # MRP (Maximum Retail Price)
     mrp_tag = soup.find("span", class_="a-size-small aok-offscreen")
     if mrp_tag:
         extracted_info['MRP'] = clean_price(mrp_tag.get_text(separator=" ", strip=True))
-
-    # Discount Calculation based on MRP and Price
     if 'Price' in extracted_info and 'MRP' in extracted_info:
         try:
             price_value = float(re.sub(r"[^\d.]", "", extracted_info['Price']))
@@ -92,50 +75,32 @@ def extract_amazon_data(soup):
                 extracted_info['Discount Percentage'] = f"{discount_percentage:.2f}%"
                 extracted_info['Discount Amount'] = f"₹ {discount_amount:.2f}"
         except ValueError:
-            pass  # If conversion fails, no discount percentage or amount will be shown
-
-    # Description
+            pass
     description_tag = soup.find("div", {"id": "productDescription"})
     if description_tag:
         extracted_info['Description'] = description_tag.get_text(separator=" ", strip=True)
-
-    # Key Features
     bullet_points_tag = soup.find("div", {"id": "feature-bullets"})
     if bullet_points_tag:
-        features = []
-        for li in bullet_points_tag.find_all("li"):
-            features.append(li.get_text(separator=" ", strip=True))
+        features = [li.get_text(separator=" ", strip=True) for li in bullet_points_tag.find_all("li")]
         extracted_info['Key Features'] = "\n".join(features)
-
-    # Rating and Reviews
     rating_tag = soup.find("span", {"class": "a-icon-alt"})
     reviews_tag = soup.find("span", {"id": "acrCustomerReviewText"})
     if rating_tag and reviews_tag:
         extracted_info['Rating'] = rating_tag.get_text(separator=" ", strip=True)
         extracted_info['Reviews'] = reviews_tag.get_text(separator=" ", strip=True)
-
     return extracted_info
 
-# Function to extract data from Flipkart
 def extract_flipkart_data(soup):
     extracted_info = {}
-
-    # Product Title
     title_tag = soup.find("span", {"class": "B_NuCI"})
     if title_tag:
         extracted_info['Title'] = title_tag.get_text(separator=" ", strip=True)
-
-    # Price - Flipkart
     price_tag = soup.find("div", {"class": "Nx9bqj CxhGGd yKS4la"})
     if price_tag:
         extracted_info['Price'] = price_tag.get_text(separator=" ", strip=True)
-
-    # MRP (Original price) - Flipkart
     mrp_tag = soup.find("div", {"class": "yRaY8j A6+E6v yKS4la"})
     if mrp_tag:
         extracted_info['MRP'] = clean_price(mrp_tag.get_text(separator=" ", strip=True))
-
-    # Discount Calculation based on MRP and Price
     if 'Price' in extracted_info and 'MRP' in extracted_info:
         try:
             price_value = float(re.sub(r"[^\d.]", "", extracted_info['Price']))
@@ -146,84 +111,68 @@ def extract_flipkart_data(soup):
                 extracted_info['Discount Percentage'] = f"{discount_percentage:.2f}%"
                 extracted_info['Discount Amount'] = f"₹ {discount_amount:.2f}"
         except ValueError:
-            pass  # If conversion fails, no discount percentage or amount will be shown
-
-    # Discount - Flipkart (if available)
+            pass
     discount_tag = soup.find("div", {"class": "UkUFwK WW8yVX yKS4la"})
     if discount_tag:
         extracted_info['Discount'] = discount_tag.get_text(separator=" ", strip=True)
-
-    # Description
     description_tag = soup.find("div", {"class": "_1mXcCf"})
     if description_tag:
         extracted_info['Description'] = description_tag.get_text(separator=" ", strip=True)
-
-    # Key Features
     bullet_points_tag = soup.find("ul", {"class": "_1xgFaf"})
     if bullet_points_tag:
-        features = []
-        for li in bullet_points_tag.find_all("li"):
-            features.append(li.get_text(separator=" ", strip=True))
+        features = [li.get_text(separator=" ", strip=True) for li in bullet_points_tag.find_all("li")]
         extracted_info['Key Features'] = "\n".join(features)
-
-    # Rating and Reviews
     rating_tag = soup.find("div", {"class": "_3LWZlK"})
     reviews_tag = soup.find("span", {"class": "_2_R_DZ"})
     if rating_tag and reviews_tag:
         extracted_info['Rating'] = rating_tag.get_text(separator=" ", strip=True)
         extracted_info['Reviews'] = reviews_tag.get_text(separator=" ", strip=True)
-
     return extracted_info
 
 if url:
     try:
-        st.info("Fetching content with Selenium...")
+        st.info("📦 Fetching content with Selenium...")
         soup = get_soup_with_selenium(url)
 
-        # Check if the URL is from Amazon or Flipkart
+        # Load models after URL input to avoid slow startup
+        summarizer, sentiment_analyzer = load_models()
+
         if "amazon" in url.lower():
             extracted_info = extract_amazon_data(soup)
         elif "flipkart" in url.lower():
             extracted_info = extract_flipkart_data(soup)
         else:
-            st.warning("The URL is neither an Amazon nor a Flipkart product page.")
+            st.warning("⚠️ Only Amazon and Flipkart product pages are supported.")
             st.stop()
 
-        # Debugging: Check the extracted_info dictionary
-        st.write("Extracted Info:")
+        st.write("📑 **Extracted Info:**")
         st.write(extracted_info)
 
-        # Display product details
         main_content = "\n".join([f"{key}: {value}" for key, value in extracted_info.items()])
         clean_text = " ".join(main_content.split())
         max_input_length = 512
         truncated_text = clean_text[:max_input_length]
 
-        with st.expander("🔍 Show extracted text"):
+        with st.expander("🔍 Show Extracted Text"):
             st.write(truncated_text)
 
-        st.info("Summarizing...")
+        st.info("✏️ Summarizing product information...")
         summary = summarizer(truncated_text, max_length=150, min_length=40, do_sample=False)[0]['summary_text']
-
         st.subheader("📝 Summary")
         st.write(summary)
 
-        st.info("Analyzing sentiment...")
+        st.info("🔍 Analyzing sentiment...")
         sentiment = sentiment_analyzer(summary)[0]
-
         st.subheader("💬 Sentiment Analysis")
-        st.write(f"Sentiment: {sentiment['label']}, with a score of {sentiment['score']:.2f}")
+        st.write(f"Sentiment: `{sentiment['label']}` with score `{sentiment['score']:.2f}`")
 
         st.subheader("🛒 Product Details")
         product_details = {
-            "Attribute": ["Title", "Price", "MRP",
-                        #    "Discount",
-                             "Discount Percentage", "Discount Amount", "Description", "Rating", "Reviews"],
+            "Attribute": ["Title", "Price", "MRP", "Discount Percentage", "Discount Amount", "Description", "Rating", "Reviews"],
             "Value": [
                 extracted_info.get("Title", "N/A"),
                 extracted_info.get("Price", "N/A"),
                 extracted_info.get("MRP", "N/A"),
-                # extracted_info.get("Discount", "N/A"),
                 extracted_info.get("Discount Percentage", "N/A"),
                 extracted_info.get("Discount Amount", "N/A"),
                 extracted_info.get("Description", "N/A"),
@@ -241,4 +190,4 @@ if url:
                 st.write(f"- {feature}")
 
     except Exception as e:
-        st.error(f"An error occurred: {e}")
+        st.error(f"❌ An error occurred: {e}")
