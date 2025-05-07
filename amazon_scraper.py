@@ -1,205 +1,122 @@
-import requests
 import pandas as pd
 from bs4 import BeautifulSoup
-from transformers import pipeline
+from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, pipeline
 import re
 import streamlit as st
+import requests
+import torch
+import os
 
+# Load summarization model
 def load_models():
-    summarizer = pipeline("summarization", model="t5-small")
+    model_name = "t5-small"
+    local_cache_dir = os.path.join(os.getcwd(), "local_model_cache")
+    os.makedirs(local_cache_dir, exist_ok=True)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name, cache_dir=local_cache_dir)
+    model = AutoModelForSeq2SeqLM.from_pretrained(model_name, cache_dir=local_cache_dir).to(device)
+
+    device_index = 0 if torch.cuda.is_available() else -1
+    summarizer = pipeline("summarization", model=model, tokenizer=tokenizer, device=device_index)
     return summarizer
 
 summarizer = load_models()
 
+# Utility: Fetch page with headers
+def get_page_content(url):
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/114.0.0.0 Safari/537.36"
+        )
+    }
+    response = requests.get(url, headers=headers)
+    if response.status_code == 200:
+        return BeautifulSoup(response.text, "html.parser")
+    else:
+        raise Exception(f"Failed to fetch page. Status code: {response.status_code}")
+
+# Clean ₹ values
+def clean_price(value):
+    clean_value = re.sub(r"[^\d.]", "", value)
+    try:
+        return float(clean_value)
+    except:
+        return None
+
+# Extract Amazon info
+def extract_amazon_data(soup):
+    title = soup.select_one("#productTitle")
+    price = soup.select_one(".a-price .a-offscreen")
+    mrp = soup.select_one(".a-text-price .a-offscreen")
+    rating = soup.select_one(".a-icon-alt")
+    review_count = soup.select_one("#acrCustomerReviewText")
+    description = soup.select_one("#productDescription")
+    key_features = soup.select_one("#feature-bullets")
+
+    price_val = clean_price(price.get_text()) if price else None
+    mrp_val = clean_price(mrp.get_text()) if mrp else None
+
+    discount = round(mrp_val - price_val, 2) if mrp_val and price_val else "N/A"
+    discount_pct = round(((mrp_val - price_val) / mrp_val) * 100, 2) if mrp_val and price_val else "N/A"
+
+    return {
+        "Title": title.get_text(strip=True) if title else "N/A",
+        "Price": f"₹{price_val}" if price_val else "N/A",
+        "MRP": f"₹{mrp_val}" if mrp_val else "N/A",
+        "Discount Amount": f"₹{discount}" if isinstance(discount, float) else "N/A",
+        "Discount Percentage": f"{discount_pct}%" if isinstance(discount_pct, float) else "N/A",
+        "Rating": rating.get_text(strip=True) if rating else "N/A",
+        "Reviews": review_count.get_text(strip=True) if review_count else "N/A",
+        "Description": description.get_text(strip=True) if description else "N/A",
+        "Key Features": key_features.get_text(separator="\n", strip=True) if key_features else "N/A",
+    }
+
+# Extract Flipkart info
+def extract_flipkart_data(soup):
+    title = soup.select_one("span.B_NuCI")
+    price = soup.select_one("div._30jeq3._16Jk6d")
+    mrp = soup.select_one("div._3I9_wc._2p6lqe")
+    rating = soup.select_one("div._3LWZlK")
+    review_count = soup.select_one("span._2_R_DZ")
+    description = soup.select_one("div._1mXcCf")
+    key_features = soup.select_one("div._2418kt ul")
+
+    price_val = clean_price(price.get_text()) if price else None
+    mrp_val = clean_price(mrp.get_text()) if mrp else None
+
+    discount = round(mrp_val - price_val, 2) if mrp_val and price_val else "N/A"
+    discount_pct = round(((mrp_val - price_val) / mrp_val) * 100, 2) if mrp_val and price_val else "N/A"
+
+    return {
+        "Title": title.get_text(strip=True) if title else "N/A",
+        "Price": f"₹{price_val}" if price_val else "N/A",
+        "MRP": f"₹{mrp_val}" if mrp_val else "N/A",
+        "Discount Amount": f"₹{discount}" if isinstance(discount, float) else "N/A",
+        "Discount Percentage": f"{discount_pct}%" if isinstance(discount_pct, float) else "N/A",
+        "Rating": rating.get_text(strip=True) if rating else "N/A",
+        "Reviews": review_count.get_text(strip=True) if review_count else "N/A",
+        "Description": description.get_text(strip=True) if description else "N/A",
+        "Key Features": key_features.get_text(separator="\n", strip=True) if key_features else "N/A",
+    }
+
+# Streamlit App
 st.title("🔗 Ecommerce Product Scraper & Analyzer")
 
 url = st.text_input("Enter a URL to summarize", "")
-
-def get_flipkart_content(url):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    res = requests.get(url, headers=headers, timeout=10)
-    res.raise_for_status()
-    soup = BeautifulSoup(res.text, 'html.parser')
-    return soup
-
-def get_amazon_content(url):
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-    }
-    res = requests.get(url, headers=headers, timeout=10)
-    res.raise_for_status()
-    soup = BeautifulSoup(res.text, 'html.parser')
-    return soup
-
-def clean_price(value):
-    clean_value = re.sub(r"^[^\d₹]*|\s*[^\d₹.]+$", "", value).strip()
-    return clean_value
-
-def extract_amazon_data(soup):
-    extracted_info = {}
-
-    title_tag = soup.find("span", {"id": "productTitle"})
-    if title_tag:
-        extracted_info['Title'] = title_tag.get_text(separator=" ", strip=True)
-
-    price_tag = soup.find("span", {'class': 'a-price-whole'})
-    if not price_tag:
-        price_tag = soup.find("span", {"id": "priceblock_dealprice"})
-    if price_tag:
-        currency_tag = soup.find("span", {'class': 'a-price-symbol'})
-        currency = currency_tag.get_text() if currency_tag else "₹"
-        price_clean = price_tag.get_text(separator=' ', strip=True).replace(",", "").replace(".", "")
-        extracted_info['Price'] = f"{currency} {price_tag.get_text(separator=' ', strip=True)}"
-        try:
-            price_value = float(re.sub(r"[^\d.]", "", price_tag.get_text()))
-        except:
-            price_value = None
-    else:
-        price_value = None
-
-    # Look for MRP using class="a-offscreen"
-    mrp_value = None
-    all_prices = soup.find_all("span", class_="a-offscreen")
-    price_values = []
-
-    for tag in all_prices:
-        try:
-            val = float(re.sub(r"[^\d.]", "", tag.get_text()))
-            price_values.append(val)
-        except:
-            continue
-
-    if price_values and price_value:
-        mrp_candidates = [val for val in price_values if val > price_value]
-        if mrp_candidates:
-            mrp_value = max(mrp_candidates)
-            extracted_info['MRP'] = f"₹ {mrp_value:,.2f}"
-
-    # Calculate discount
-    if price_value and mrp_value:
-        discount_percentage = ((mrp_value - price_value) / mrp_value) * 100
-        discount_amount = mrp_value - price_value
-        extracted_info['Discount Percentage'] = f"{discount_percentage:.2f}%"
-        extracted_info['Discount Amount'] = f"₹ {discount_amount:.2f}"
-
-    description_tag = soup.find("div", {"id": "productDescription"})
-    if not description_tag:
-        description_tag = soup.find("div", {"id": "productDescription_feature_div"})
-
-    if not description_tag:
-        meta_desc = soup.find("meta", attrs={"name": "description"})
-        if meta_desc:
-            extracted_info['Description'] = meta_desc["content"].strip()
-
-    if description_tag and not extracted_info.get('Description'):
-        extracted_info['Description'] = description_tag.get_text(separator=" ", strip=True)
-
-    bullet_points_tag = soup.find("div", {"id": "feature-bullets"})
-    if bullet_points_tag:
-        features = []
-        for li in bullet_points_tag.find_all("li"):
-            features.append(li.get_text(separator=" ", strip=True))
-        extracted_info['Key Features'] = "\n".join(features)
-
-    rating_tag = soup.find("span", {"class": "a-icon-alt"})
-    reviews_tag = soup.find("span", {"id": "acrCustomerReviewText"})
-    if rating_tag and reviews_tag:
-        extracted_info['Rating'] = rating_tag.get_text(separator=" ", strip=True)
-        extracted_info['Reviews'] = reviews_tag.get_text(separator=" ", strip=True)
-
-    return extracted_info
-
-def extract_flipkart_data(soup):
-    extracted_info = {}
-
-    title_tag = soup.find("span", {"class": "VU-ZEz"})
-    if title_tag:
-        extracted_info['Title'] = title_tag.get_text(separator=" ", strip=True)
-
-    price = None
-    price_classes = [
-        "yRaY8j A6+E6v yKS4la",
-        "Nx9bqj CxhGGd",
-        "Nx9bqj CxhGGd yKS4la"
-    ]
-    for cls in price_classes:
-        price_tag = soup.find("div", {"class": cls})
-        if price_tag:
-            price = price_tag.get_text(strip=True).replace("₹", "").replace(",", "")
-            extracted_info['Price'] = f"₹ {price}"
-            price = float(price)
-            break
-
-    mrp = None
-    mrp_classes = [
-        "yRaY8j A6+E6v",
-        "yRaY8j A6+E6v yKS4la"
-    ]
-    for cls in mrp_classes:
-        mrp_tag = soup.find_all("div", {"class": cls})
-        for tag in mrp_tag:
-            tag_text = tag.get_text(strip=True).replace("₹", "").replace(",", "")
-            try:
-                value = float(tag_text)
-                if price is None or value > price:
-                    mrp = value
-                    extracted_info["MRP"] = f"₹{value:.2f}"
-                    break
-            except:
-                continue
-        if mrp:
-            break
-
-    if price and mrp:
-        discount_amt = mrp - price
-        discount_pct = (discount_amt / mrp) * 100
-        extracted_info['Discount Amount'] = f"₹ {discount_amt:.2f}"
-        extracted_info['Discount Percentage'] = f"{discount_pct:.2f}%"
-
-    description_tag_amazon = soup.find("div", {"id": "productDescription"})
-    if description_tag_amazon:
-        extracted_info['Description'] = description_tag_amazon.get_text(separator=" ", strip=True)
-
-    if not extracted_info.get('Description'):
-        meta_description = soup.find("meta", attrs={"name": "Description"})
-        if meta_description and meta_description.get("content"):
-            extracted_info['Description'] = meta_description["content"].strip()
-
-    if not extracted_info.get('Description'):
-        description_tag_flipkart = soup.find("div", {"class": "_1mXcCf RmoJUa"})
-        if description_tag_flipkart:
-            extracted_info['Description'] = description_tag_flipkart.get_text(strip=True)
-
-    rating_tag = soup.find("span", {"class": "a-icon-alt"})
-    reviews_tag = soup.find("span", {"id": "acrCustomerReviewText"})
-    if rating_tag and reviews_tag:
-        extracted_info['Rating'] = rating_tag.get_text(separator=" ", strip=True)
-        extracted_info['Reviews'] = reviews_tag.get_text(separator=" ", strip=True)
-
-    if not extracted_info.get('Rating') or not extracted_info.get('Reviews'):
-        rating_review_span = soup.find("span", string=lambda text: text and "Ratings" in text)
-        if rating_review_span and rating_review_span.parent.name == "span":
-            spans = rating_review_span.parent.find_all("span")
-            if len(spans) >= 3:
-                extracted_info['Rating'] = spans[0].get_text(strip=True)
-                extracted_info['Reviews'] = spans[2].get_text(strip=True)
-
-    return extracted_info
 
 if url:
     try:
         st.info("Fetching content...")
 
-        # Clear previous details before extracting new data
-        extracted_info = {}
+        soup = get_page_content(url)
 
         if "amazon" in url.lower():
-            soup = get_amazon_content(url)
             extracted_info = extract_amazon_data(soup)
         elif "flipkart" in url.lower():
-            soup = get_flipkart_content(url)
             extracted_info = extract_flipkart_data(soup)
         else:
             st.warning("The URL is neither an Amazon nor a Flipkart product page.")
@@ -210,8 +127,7 @@ if url:
 
         main_content = "\n".join([f"{key}: {value}" for key, value in extracted_info.items()])
         clean_text = " ".join(main_content.split())
-        max_input_length = 512
-        truncated_text = clean_text[:max_input_length]
+        truncated_text = clean_text[:512]
 
         with st.expander("🔍 Show extracted text"):
             st.write(truncated_text)
@@ -236,7 +152,6 @@ if url:
                 extracted_info.get("Reviews", "N/A"),
             ]
         }
-
         product_df = pd.DataFrame(product_details)
         st.dataframe(product_df, use_container_width=True)
 
