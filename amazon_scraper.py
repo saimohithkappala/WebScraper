@@ -22,7 +22,8 @@ def get_flipkart_content(url):
     }
     res = requests.get(url, headers=headers, timeout=10)
     res.raise_for_status()
-    return BeautifulSoup(res.text, 'html.parser')
+    soup = BeautifulSoup(res.text, 'html.parser')
+    return soup
 
 def get_amazon_content(url):
     headers = {
@@ -30,41 +31,43 @@ def get_amazon_content(url):
     }
     res = requests.get(url, headers=headers, timeout=10)
     res.raise_for_status()
-    return BeautifulSoup(res.text, 'html.parser')
+    soup = BeautifulSoup(res.text, 'html.parser')
+    return soup
 
 def clean_price(value):
-    return re.sub(r"[^\d.]", "", value).strip()
+    clean_value = re.sub(r"^[^\d₹]*|\s*[^\d₹.]+$", "", value).strip()
+    return clean_value
 
 def extract_amazon_data(soup):
     extracted_info = {}
 
-    # Title
     title_tag = soup.find("span", {"id": "productTitle"})
     if title_tag:
         extracted_info['Title'] = title_tag.get_text(separator=" ", strip=True)
 
-    # Price
     price_tag = soup.find("span", {'class': 'a-price-whole'})
     if not price_tag:
         price_tag = soup.find("span", {"id": "priceblock_dealprice"})
     if price_tag:
         currency_tag = soup.find("span", {'class': 'a-price-symbol'})
         currency = currency_tag.get_text() if currency_tag else "₹"
+        price_clean = price_tag.get_text(separator=' ', strip=True).replace(",", "").replace(".", "")
         extracted_info['Price'] = f"{currency} {price_tag.get_text(separator=' ', strip=True)}"
         try:
-            price_value = float(clean_price(price_tag.get_text()))
+            price_value = float(re.sub(r"[^\d.]", "", price_tag.get_text()))
         except:
             price_value = None
     else:
         price_value = None
 
-    # MRP
+    # Look for MRP using class="a-offscreen"
     mrp_value = None
     all_prices = soup.find_all("span", class_="a-offscreen")
     price_values = []
+
     for tag in all_prices:
         try:
-            val = float(clean_price(tag.get_text()))
+            val = float(re.sub(r"[^\d.]", "", tag.get_text()))
             price_values.append(val)
         except:
             continue
@@ -75,35 +78,37 @@ def extract_amazon_data(soup):
             mrp_value = max(mrp_candidates)
             extracted_info['MRP'] = f"₹ {mrp_value:,.2f}"
 
-    # Discount Calculation
+    # Calculate discount
     if price_value and mrp_value:
-        discount_amt = mrp_value - price_value
-        discount_pct = (discount_amt / mrp_value) * 100
-        extracted_info['Discount Amount'] = f"₹ {discount_amt:.2f}"
-        extracted_info['Discount Percentage'] = f"{discount_pct:.2f}%"
+        discount_percentage = ((mrp_value - price_value) / mrp_value) * 100
+        discount_amount = mrp_value - price_value
+        extracted_info['Discount Percentage'] = f"{discount_percentage:.2f}%"
+        extracted_info['Discount Amount'] = f"₹ {discount_amount:.2f}"
 
-    # Description
-    description_tag = soup.find("div", {"id": "productDescription"}) or soup.find("div", {"id": "productDescription_feature_div"})
+    description_tag = soup.find("div", {"id": "productDescription"})
+    if not description_tag:
+        description_tag = soup.find("div", {"id": "productDescription_feature_div"})
+
     if not description_tag:
         meta_desc = soup.find("meta", attrs={"name": "description"})
         if meta_desc:
             extracted_info['Description'] = meta_desc["content"].strip()
+
     if description_tag and not extracted_info.get('Description'):
         extracted_info['Description'] = description_tag.get_text(separator=" ", strip=True)
 
-    # Key Features
     bullet_points_tag = soup.find("div", {"id": "feature-bullets"})
     if bullet_points_tag:
-        features = [li.get_text(separator=" ", strip=True) for li in bullet_points_tag.find_all("li")]
+        features = []
+        for li in bullet_points_tag.find_all("li"):
+            features.append(li.get_text(separator=" ", strip=True))
         extracted_info['Key Features'] = "\n".join(features)
 
-    # Ratings and Reviews
     rating_tag = soup.find("span", {"class": "a-icon-alt"})
     reviews_tag = soup.find("span", {"id": "acrCustomerReviewText"})
-    if rating_tag:
-        extracted_info['Rating'] = rating_tag.get_text(strip=True)
-    if reviews_tag:
-        extracted_info['Reviews'] = reviews_tag.get_text(strip=True)
+    if rating_tag and reviews_tag:
+        extracted_info['Rating'] = rating_tag.get_text(separator=" ", strip=True)
+        extracted_info['Reviews'] = reviews_tag.get_text(separator=" ", strip=True)
 
     return extracted_info
 
@@ -112,7 +117,7 @@ def extract_flipkart_data(soup):
 
     title_tag = soup.find("span", {"class": "VU-ZEz"})
     if title_tag:
-        extracted_info['Title'] = title_tag.get_text(strip=True)
+        extracted_info['Title'] = title_tag.get_text(separator=" ", strip=True)
 
     price = None
     price_classes = [
@@ -123,8 +128,9 @@ def extract_flipkart_data(soup):
     for cls in price_classes:
         price_tag = soup.find("div", {"class": cls})
         if price_tag:
-            price = float(price_tag.get_text(strip=True).replace("₹", "").replace(",", ""))
-            extracted_info['Price'] = f"₹ {price:,.2f}"
+            price = price_tag.get_text(strip=True).replace("₹", "").replace(",", "")
+            extracted_info['Price'] = f"₹ {price}"
+            price = float(price)
             break
 
     mrp = None
@@ -133,12 +139,14 @@ def extract_flipkart_data(soup):
         "yRaY8j A6+E6v yKS4la"
     ]
     for cls in mrp_classes:
-        for tag in soup.find_all("div", {"class": cls}):
+        mrp_tag = soup.find_all("div", {"class": cls})
+        for tag in mrp_tag:
+            tag_text = tag.get_text(strip=True).replace("₹", "").replace(",", "")
             try:
-                val = float(tag.get_text(strip=True).replace("₹", "").replace(",", ""))
-                if not mrp or val > price:
-                    mrp = val
-                    extracted_info["MRP"] = f"₹ {val:,.2f}"
+                value = float(tag_text)
+                if price is None or value > price:
+                    mrp = value
+                    extracted_info["MRP"] = f"₹{value:.2f}"
                     break
             except:
                 continue
@@ -168,8 +176,8 @@ def extract_flipkart_data(soup):
     rating_tag = soup.find("span", {"class": "a-icon-alt"})
     reviews_tag = soup.find("span", {"id": "acrCustomerReviewText"})
     if rating_tag and reviews_tag:
-        extracted_info['Rating'] = rating_tag.get_text(strip=True)
-        extracted_info['Reviews'] = reviews_tag.get_text(strip=True)
+        extracted_info['Rating'] = rating_tag.get_text(separator=" ", strip=True)
+        extracted_info['Reviews'] = reviews_tag.get_text(separator=" ", strip=True)
 
     if not extracted_info.get('Rating') or not extracted_info.get('Reviews'):
         rating_review_span = soup.find("span", string=lambda text: text and "Ratings" in text)
@@ -184,6 +192,9 @@ def extract_flipkart_data(soup):
 if url:
     try:
         st.info("Fetching content...")
+
+        # Clear previous details before extracting new data
+        extracted_info = {}
 
         if "amazon" in url.lower():
             soup = get_amazon_content(url)
@@ -200,7 +211,8 @@ if url:
 
         main_content = "\n".join([f"{key}: {value}" for key, value in extracted_info.items()])
         clean_text = " ".join(main_content.split())
-        truncated_text = clean_text[:512]
+        max_input_length = 512
+        truncated_text = clean_text[:max_input_length]
 
         with st.expander("🔍 Show extracted text"):
             st.write(truncated_text)
@@ -228,15 +240,14 @@ if url:
                 extracted_info.get("Reviews", "N/A"),
             ]
         }
-        st.dataframe(pd.DataFrame(product_details), use_container_width=True)
+
+        product_df = pd.DataFrame(product_details)
+        st.dataframe(product_df, use_container_width=True)
 
         if 'Key Features' in extracted_info:
             st.subheader("🔑 Key Features")
             for feature in extracted_info['Key Features'].split("\n"):
                 st.write(f"- {feature}")
-
-        st.subheader("🧠 Sentiment")
-        st.write(f"**Label:** {sentiment['label']}  \n**Score:** {sentiment['score']:.2f}")
 
     except Exception as e:
         st.error(f"An error occurred: {e}")
