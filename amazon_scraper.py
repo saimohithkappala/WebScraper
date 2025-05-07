@@ -7,14 +7,13 @@ import streamlit as st
 
 def load_models():
     summarizer = pipeline("summarization", model="t5-small")
-    sentiment_analyzer = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
-    return summarizer, sentiment_analyzer
+    return summarizer
 
-summarizer, sentiment_analyzer = load_models()
+summarizer = load_models()
 
 st.title("🔗 Ecommerce Product Scraper & Analyzer")
 
-url = st.text_input("Enter a URL to summarize and analyze sentiment", "")
+url = st.text_input("Enter a URL to summarize", "")
 
 def get_flipkart_content(url):
     headers = {
@@ -222,9 +221,6 @@ if url:
 
         st.subheader("📝 Summary")
         st.write(summary)
-
-        st.info("Analyzing sentiment...")
-        sentiment = sentiment_analyzer(summary)[0]
 
         st.subheader("🛒 Product Details")
         product_details = {
