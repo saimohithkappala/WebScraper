@@ -50,27 +50,51 @@ def extract_amazon_data(soup):
         price_tag = soup.find("span", {"id": "priceblock_dealprice"})
     if price_tag:
         currency_tag = soup.find("span", {'class': 'a-price-symbol'})
-        currency = currency_tag.get_text() if currency_tag else "$"
+        currency = currency_tag.get_text() if currency_tag else "₹"
+        price_clean = price_tag.get_text(separator=' ', strip=True).replace(",", "").replace(".", "")
         extracted_info['Price'] = f"{currency} {price_tag.get_text(separator=' ', strip=True)}"
-
-    mrp_tag = soup.find("span", class_="a-size-small aok-offscreen")
-    if mrp_tag:
-        extracted_info['MRP'] = clean_price(mrp_tag.get_text(separator=" ", strip=True))
-
-    if 'Price' in extracted_info and 'MRP' in extracted_info:
         try:
-            price_value = float(re.sub(r"[^\d.]", "", extracted_info['Price']))
-            mrp_value = float(re.sub(r"[^\d.]", "", extracted_info['MRP']))
-            if mrp_value > 0 and price_value < mrp_value:
-                discount_percentage = ((mrp_value - price_value) / mrp_value) * 100
-                discount_amount = mrp_value - price_value
-                extracted_info['Discount Percentage'] = f"{discount_percentage:.2f}%"
-                extracted_info['Discount Amount'] = f"₹ {discount_amount:.2f}"
-        except ValueError:
-            pass
+            price_value = float(re.sub(r"[^\d.]", "", price_tag.get_text()))
+        except:
+            price_value = None
+    else:
+        price_value = None
+
+    # Look for MRP using class="a-offscreen"
+    mrp_value = None
+    all_prices = soup.find_all("span", class_="a-offscreen")
+    price_values = []
+
+    for tag in all_prices:
+        try:
+            val = float(re.sub(r"[^\d.]", "", tag.get_text()))
+            price_values.append(val)
+        except:
+            continue
+
+    if price_values and price_value:
+        mrp_candidates = [val for val in price_values if val > price_value]
+        if mrp_candidates:
+            mrp_value = max(mrp_candidates)
+            extracted_info['MRP'] = f"₹ {mrp_value:,.2f}"
+
+    # Calculate discount
+    if price_value and mrp_value:
+        discount_percentage = ((mrp_value - price_value) / mrp_value) * 100
+        discount_amount = mrp_value - price_value
+        extracted_info['Discount Percentage'] = f"{discount_percentage:.2f}%"
+        extracted_info['Discount Amount'] = f"₹ {discount_amount:.2f}"
 
     description_tag = soup.find("div", {"id": "productDescription"})
-    if description_tag:
+    if not description_tag:
+        description_tag = soup.find("div", {"id": "productDescription_feature_div"})
+
+    if not description_tag:
+        meta_desc = soup.find("meta", attrs={"name": "description"})
+        if meta_desc:
+            extracted_info['Description'] = meta_desc["content"].strip()
+
+    if description_tag and not extracted_info.get('Description'):
         extracted_info['Description'] = description_tag.get_text(separator=" ", strip=True)
 
     bullet_points_tag = soup.find("div", {"id": "feature-bullets"})
